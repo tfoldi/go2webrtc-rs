@@ -3,7 +3,7 @@ use std::env;
 use std::io::Write;
 use std::sync::Arc;
 
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use base64::encode as base64_encode;
 use chrono::Utc;
 use clap::{AppSettings, Arg, Command};
@@ -462,26 +462,26 @@ async fn main() -> Result<()> {
 
     let _ = gather_complete.recv().await;
 
-    let mut line = "".to_string();
+    let desc_data: String;
 
     // Send the offer to the robot via HTTP
     if let Some(local_desc) = peer_connection.local_description().await {
         let json_str = serde_json::to_string(&local_desc)?;
         println!("{json_str}");
 
-        match post_offer(&robot_ip, &robot_token, &local_desc.sdp).await {
+        desc_data = match post_offer(&robot_ip, &robot_token, &local_desc.sdp).await {
             Ok(Some(json)) => {
-                line = json.to_string();
+                let line = json.to_string();
                 println!("Received response: {}", line);
+                line
             }
-            Ok(None) => println!("No response received."),
-            Err(e) => println!("Error occurred: {}", e),
+            Ok(None) => return Err(anyhow!("No response received.")),
+            Err(e) => return Err(e.into()),
         }
     } else {
-        println!("generate local_description failed!");
+        return Err(anyhow!("generate local_description failed!")); 
     }
 
-    let desc_data = line; // signal::decode(line.as_str())?;
     let answer = serde_json::from_str::<RTCSessionDescription>(&desc_data)?;
 
     // Apply the answer as the remote description
