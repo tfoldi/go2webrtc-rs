@@ -1,19 +1,21 @@
 use std::collections::HashMap;
+use std::env;
 use std::io::Write;
 use std::sync::Arc;
 
+use anyhow::Result;
 use base64::encode as base64_encode;
 use chrono::Utc;
+use clap::{AppSettings, Arg, Command};
+use dotenv::dotenv;
 use md5;
 use rand::Rng;
 use reqwest::Client;
 use serde::Serialize;
 use serde_json::{json, Value};
-use anyhow::Result;
-use clap::{AppSettings, Arg, Command};
+use tokio::net::UdpSocket;
 use tokio::sync::Mutex;
 use tokio::time::Duration;
-use tokio::net::UdpSocket;
 use webrtc::api::interceptor_registry::register_default_interceptors;
 use webrtc::api::media_engine::{MediaEngine, MIME_TYPE_H264, MIME_TYPE_OPUS};
 use webrtc::api::APIBuilder;
@@ -23,13 +25,13 @@ use webrtc::interceptor::registry::Registry;
 use webrtc::peer_connection::configuration::RTCConfiguration;
 use webrtc::peer_connection::peer_connection_state::RTCPeerConnectionState;
 use webrtc::peer_connection::sdp::session_description::RTCSessionDescription;
+use webrtc::rtcp::payload_feedbacks::picture_loss_indication::PictureLossIndication;
 use webrtc::rtp_transceiver::rtp_codec::{
     RTCRtpCodecCapability, RTCRtpCodecParameters, RTPCodecType,
 };
-use webrtc::util::{Conn, Marshal};
-use webrtc::rtcp::payload_feedbacks::picture_loss_indication::PictureLossIndication;
 use webrtc::rtp_transceiver::rtp_transceiver_direction::RTCRtpTransceiverDirection;
 use webrtc::rtp_transceiver::RTCRtpTransceiverInit;
+use webrtc::util::{Conn, Marshal};
 
 #[derive(Serialize)]
 struct PostData {
@@ -104,10 +106,14 @@ async fn post_offer(ip: &str, token: &str, offer_sdp: &str) -> Result<Option<Val
     }
 }
 
-
 #[tokio::main]
 async fn main() -> Result<()> {
-    let mut app = Command::new("go2-webrtc")
+    dotenv().ok();
+
+    let robot_ip_env = env::var("GO2_IP").unwrap_or_else(|_| "".to_string());
+    let robot_token_default = env::var("GO2_TOKEN").unwrap_or_else(|_| "".to_string());
+
+    let mut app = Command::new("go2webrtc-rc")
         .version("0.1.0")
         .about("A Go2 WebRTC to udp broadcaster.")
         .setting(AppSettings::DeriveDisplayOrder)
@@ -116,6 +122,40 @@ async fn main() -> Result<()> {
             Arg::new("FULLHELP")
                 .help("Prints more detailed help information")
                 .long("fullhelp"),
+        )
+        .arg(
+            Arg::new("video_port")
+                .takes_value(true)
+                .short('v')
+                .long("video")
+                .value_parser(clap::value_parser!(u16))
+                .default_value("4002")
+                .help("UDP port for video streaming (default 4002)."),
+        )
+        .arg(
+            Arg::new("audio_port")
+                .takes_value(true)
+                .short('a')
+                .long("audio")
+                .value_parser(clap::value_parser!(u16)) // Ensure the value is parsed as u16
+                .default_value("4000") // Set the default value
+                .help("UDP port for audio streaming (default 4000)."),
+        )
+        .arg(
+            Arg::new("robot_ip")
+                .takes_value(true)
+                .short('r')
+                .long("robot")
+                .help("IP address of your GO2 robot.")
+                .default_value(&robot_ip_env)
+        )
+        .arg(
+            Arg::new("robot_token")
+                .takes_value(true)
+                .short('t')
+                .long("token")
+                .default_value(&robot_token_default)
+                .help("Authentication token for your GO2 robot."),
         )
         .arg(
             Arg::new("debug")
@@ -131,13 +171,23 @@ async fn main() -> Result<()> {
         std::process::exit(0);
     }
 
+    let video_port: u16 = *matches.get_one("video_port").expect("default not provided");
+    let audio_port: u16 = *matches.get_one("audio_port").expect("default not provided");
+
+    let robot_ip: &str = matches
+        .get_one::<String>("robot_ip")
+        .expect("required unless FULLHELP is present");
+    let robot_token: &str = matches
+        .get_one::<String>("robot_token")
+        .expect("default not provided");
+
     let mut udp_conns = HashMap::new();
     udp_conns.insert(
         "audio".to_owned(),
         UdpConn {
             conn: {
                 let sock = UdpSocket::bind("127.0.0.1:0").await?;
-                sock.connect(format!("127.0.0.1:{}", 4000)).await?;
+                sock.connect(format!("127.0.0.1:{}", audio_port)).await?;
                 Arc::new(sock)
             },
             payload_type: 111,
@@ -148,7 +198,7 @@ async fn main() -> Result<()> {
         UdpConn {
             conn: {
                 let sock = UdpSocket::bind("127.0.0.1:0").await?;
-                sock.connect(format!("127.0.0.1:{}", 4002)).await?;
+                sock.connect(format!("127.0.0.1:{}", video_port)).await?;
                 Arc::new(sock)
             },
             payload_type: 102,
@@ -312,13 +362,11 @@ async fn main() -> Result<()> {
             Result::<()>::Ok(())
         });
 
-        Box::pin(async move { })
+        Box::pin(async move {})
     }));
 
     let (done_tx, mut done_rx) = tokio::sync::mpsc::channel::<()>(1);
 
-    // Set the handler for Peer connection state
-    // This will notify you when the peer has connected/disconnected
     peer_connection.on_peer_connection_state_change(Box::new(move |s: RTCPeerConnectionState| {
         println!("Peer Connection State has changed: {s}");
 
@@ -416,15 +464,12 @@ async fn main() -> Result<()> {
 
     let mut line = "".to_string();
 
-    // Output the answer in base64 so we can paste it in browser
+    // Send the offer to the robot via HTTP
     if let Some(local_desc) = peer_connection.local_description().await {
         let json_str = serde_json::to_string(&local_desc)?;
         println!("{json_str}");
 
-        let ip = "192.168.88.93";
-        let token = "eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJ1c2VyIiwidWlkIjoxMzMzLCJpc3MiOiJ1bml0cmVlX3JvYm90IiwidHlwZSI6ImFjY2Vzc190b2tlbiIsImV4cCI6MTcxMDY1NTE4OX0.LQuJ7DBGVvUhx38CZp8iEABwvuAEWaMwjAkmF-Ae3-8";
-
-        match post_offer(&ip, &token, &local_desc.sdp).await {
+        match post_offer(&robot_ip, &robot_token, &local_desc.sdp).await {
             Ok(Some(json)) => {
                 line = json.to_string();
                 println!("Received response: {}", line);
