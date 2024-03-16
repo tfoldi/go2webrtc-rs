@@ -103,8 +103,13 @@ async fn post_offer(ip: &str, token: &str, offer_sdp: &str) -> Result<Option<Val
     }
 }
 
-pub async fn run(video_port: u16, audio_port: u16, robot_ip: &str, robot_token: &str, debug: bool ) -> Result<()> {
-       
+pub async fn run(
+    video_port: u16,
+    audio_port: u16,
+    robot_ip: &str,
+    robot_token: &str,
+    debug: bool,
+) -> Result<()> {
     let mut udp_conns = HashMap::new();
     udp_conns.insert(
         "audio".to_owned(),
@@ -130,20 +135,27 @@ pub async fn run(video_port: u16, audio_port: u16, robot_ip: &str, robot_token: 
     );
 
     if debug {
-        env_logger::Builder::new()
-            .format(|buf, record| {
-                writeln!(
-                    buf,
-                    "{}:{} [{}] {} - {}",
-                    record.file().unwrap_or("unknown"),
-                    record.line().unwrap_or(0),
-                    record.level(),
-                    chrono::Local::now().format("%H:%M:%S.%6f"),
-                    record.args()
-                )
-            })
-            .filter(None, log::LevelFilter::Trace)
-            .init();
+        if let Err(_) = env_logger::try_init() {
+            // Logger is already initialized, do nothing or handle the error gracefully
+            // For example, you can print a message to inform the user
+            eprintln!("Logger is already initialized");
+        } else {
+            // Configure logger if initialization succeeds
+            env_logger::Builder::new()
+                .format(|buf, record| {
+                    writeln!(
+                        buf,
+                        "{}:{} [{}] {} - {}",
+                        record.file().unwrap_or("unknown"),
+                        record.line().unwrap_or(0),
+                        record.level(),
+                        chrono::Local::now().format("%H:%M:%S.%6f"),
+                        record.args()
+                    )
+                })
+                .filter(None, log::LevelFilter::Trace)
+                .init();
+        }
     }
 
     // Create a MediaEngine object to configure the supported codec
@@ -402,7 +414,7 @@ pub async fn run(video_port: u16, audio_port: u16, robot_ip: &str, robot_token: 
             Err(e) => return Err(e.into()),
         }
     } else {
-        return Err(anyhow!("generate local_description failed!")); 
+        return Err(anyhow!("generate local_description failed!"));
     }
 
     let answer = serde_json::from_str::<RTCSessionDescription>(&desc_data)?;
