@@ -19,7 +19,7 @@ Map video stream to an udp port:
 export GO2_TOKEN="..."
 
 
-./target/debug/go2webrtc-rc  --robot 192.168.1.1
+./target/debug/go2webrtc-rs  --robot 192.168.1.1
 ```
 
 ## View
