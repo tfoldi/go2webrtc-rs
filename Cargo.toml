@@ -1,6 +1,6 @@
 [package]
 name = "go2webrtc-rs"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
 authors = ["Tamas Foldi"]
 description = "Unitree Go2 WebRTC video stream mapper"
