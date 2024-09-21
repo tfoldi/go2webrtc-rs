@@ -1,3 +1,8 @@
+# Warning
+
+As of version v1.1.1 the method of connecting to Unitree Go2 via WebRTC changed. If you have the latest firmware version please use legion's version from this repo: https://github.com/legion1581/go2_webrtc_connect
+
+
 # Usage
 
 
